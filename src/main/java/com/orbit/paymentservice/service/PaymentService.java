@@ -6,7 +6,7 @@ import com.orbit.paymentservice.exception.PaymentNotFoundException;
 
 public interface PaymentService {
 
-	PaymentResponseDto createPayment(PaymentRequestDto request);
+	PaymentResponseDto createPayment(String userId, PaymentRequestDto request);
 
     PaymentResponseDto getPaymentById(Long id) throws PaymentNotFoundException;
 

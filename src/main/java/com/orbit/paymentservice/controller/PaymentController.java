@@ -5,6 +5,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -24,8 +25,8 @@ public class PaymentController {
 	}
 
     @PostMapping
-    public ResponseEntity<PaymentResponseDto> createPayment(@RequestBody PaymentRequestDto request) {
-        return ResponseEntity.ok(paymentService.createPayment(request));
+    public ResponseEntity<PaymentResponseDto> createPayment(@RequestHeader("X-User-Id") String userId, @RequestBody PaymentRequestDto request) {
+        return ResponseEntity.ok(paymentService.createPayment(userId,request));
     }
 
     @GetMapping("/{id}")

@@ -10,7 +10,7 @@ import com.orbit.paymentservice.dto.NotificationResponseDto;
 @FeignClient(name="NOTIFICATION-SERVICE")
 public interface NotificationClient {
 	
-	@PostMapping("/api/notification")
+	@PostMapping("/api/notifications")
 	NotificationResponseDto createNotification(@RequestBody NotificationRequestDto request);
 	
 

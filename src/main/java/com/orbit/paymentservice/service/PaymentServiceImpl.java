@@ -1,14 +1,20 @@
 package com.orbit.paymentservice.service;
 
-import org.springframework.stereotype.Service;
+import java.util.HashMap;
+import java.util.Map;
 
-import com.orbit.paymentservice.client.NotificationClient;
-import com.orbit.paymentservice.dto.NotificationRequestDto;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.orbit.paymentservice.client.OrderClient;
+import com.orbit.paymentservice.dto.OrderResponseDto;
 import com.orbit.paymentservice.dto.PaymentRequestDto;
 import com.orbit.paymentservice.dto.PaymentResponseDto;
 import com.orbit.paymentservice.exception.PaymentNotFoundException;
 import com.orbit.paymentservice.model.Payment;
 import com.orbit.paymentservice.model.PaymentStatus;
+import com.orbit.paymentservice.producer.PaymentProducer;
 import com.orbit.paymentservice.repository.PaymentRepository;
 
 @Service
@@ -16,15 +22,19 @@ public class PaymentServiceImpl implements PaymentService{
 
 
     private final PaymentRepository paymentRepository;
-    private final NotificationClient notificationClient;
+    private final OrderClient orderClient;
+    private final PaymentProducer paymentProducer;
+    private final ObjectMapper objectMapper = new ObjectMapper();
     
 
-    public PaymentServiceImpl(PaymentRepository paymentRepository, NotificationClient notificationClient) {
+    public PaymentServiceImpl(PaymentRepository paymentRepository,OrderClient orderClient, PaymentProducer paymentProducer) {
 		this.paymentRepository = paymentRepository;
-		this.notificationClient = notificationClient;
+		this.orderClient=orderClient;
+		this.paymentProducer=paymentProducer;
 	}
 
 	@Override
+	@Transactional
     public PaymentResponseDto createPayment(String userId, PaymentRequestDto request) {
 
         Payment payment = new Payment();
@@ -35,11 +45,35 @@ public class PaymentServiceImpl implements PaymentService{
         payment.setStatus(PaymentStatus.SUCCESS);
 
         Payment savedPayment = paymentRepository.save(payment);
-        NotificationRequestDto notification = new NotificationRequestDto();
-        notification.setUserId(userId);
-        notification.setType("PAYMENT");
-        notification.setMessage("Payment complete successfully");
-        notificationClient.createNotification(notification);
+        
+        OrderResponseDto order = null;
+        try {
+            order = orderClient.getOrderById(request.getOrderId());
+        } catch (Exception e) {
+            System.err.println("Warning: Could not fetch order details from Order-Service: " + e.getMessage());
+        }
+        
+        try {
+            Map<String, Object> eventPayload = new HashMap<>();
+            eventPayload.put("eventType", "PAYMENT_SUCCESS");
+            eventPayload.put("userId", userId);
+            eventPayload.put("orderId", savedPayment.getOrderId());
+            eventPayload.put("paymentId", savedPayment.getId());
+            eventPayload.put("amount", savedPayment.getAmount());
+            eventPayload.put("paymentMethod", savedPayment.getPaymentMethod());
+            eventPayload.put("message", "Payment completed successfully for Order #" + savedPayment.getOrderId());
+
+            if (order != null && order.getItems() != null) {
+                eventPayload.put("items", order.getItems());
+            }
+
+            String jsonMessage = objectMapper.writeValueAsString(eventPayload);
+
+            paymentProducer.sendPaymentEvent(String.valueOf(savedPayment.getOrderId()), jsonMessage);
+
+        } catch (Exception e) {
+            System.err.println("Failed to publish Kafka payment event: " + e.getMessage());
+        }
         
         return mapToDto(savedPayment);
     }
@@ -71,7 +105,35 @@ public class PaymentServiceImpl implements PaymentService{
                 .orElseThrow(() ->new PaymentNotFoundException("Payment not found"));
         payment.setStatus(PaymentStatus.REFUNDED);
 
-        return mapToDto(paymentRepository.save(payment));
+        Payment refundedPayment = paymentRepository.save(payment);
+
+        OrderResponseDto order = null;
+        try {
+            order = orderClient.getOrderById(refundedPayment.getOrderId());
+        } catch (Exception e) {
+            System.err.println("Warning: Could not fetch order details for refund: " + e.getMessage());
+        }
+
+        try {
+            Map<String, Object> eventPayload = new HashMap<>();
+            eventPayload.put("eventType", "PAYMENT_REFUNDED");
+            eventPayload.put("orderId", refundedPayment.getOrderId());
+            eventPayload.put("paymentId", refundedPayment.getId());
+            eventPayload.put("amount", refundedPayment.getAmount());
+            eventPayload.put("message", "Payment refunded for Order #" + refundedPayment.getOrderId());
+
+            if (order != null && order.getItems() != null) {
+                eventPayload.put("items", order.getItems());
+            }
+
+            String jsonMessage = objectMapper.writeValueAsString(eventPayload);
+            paymentProducer.sendPaymentEvent(String.valueOf(refundedPayment.getOrderId()), jsonMessage);
+
+        } catch (Exception e) {
+            System.err.println("Failed to publish Kafka refund event: " + e.getMessage());
+        }
+
+        return mapToDto(refundedPayment);
     }
 
     private PaymentResponseDto mapToDto(Payment payment) {
